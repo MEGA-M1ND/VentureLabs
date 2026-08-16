@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs first and gates everything else. This repo talks to a payment API, so
+  # a committed credential is the failure that matters most.
+  secret-guard:
+    name: secret guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail if any .env file is tracked
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.env\.example$' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::tracked .env file(s) found:"
+            echo "$tracked"
+            exit 1
+          fi
+          echo "no tracked .env files"
+
+      - name: Scan history for live Razorpay keys and common token shapes
+        run: |
+          # rzp_live_ is never acceptable. rzp_test_ is not a real secret but is
+          # still credential-shaped, so it is flagged rather than ignored.
+          if git grep -nIE 'rzp_live_[A-Za-z0-9]{10,}' $(git rev-list --all) -- 2>/dev/null | head -20 | grep .; then
+            echo "::error::live Razorpay key found in history"
+            exit 1
+          fi
+          if git grep -nIE '(gho_|ghp_|github_pat_)[A-Za-z0-9_]{20,}' $(git rev-list --all) -- 2>/dev/null | head -20 | grep .; then
+            echo "::error::GitHub token found in history"
+            exit 1
+          fi
+          if git grep -nIE 'sk-ant-[A-Za-z0-9-]{20,}' $(git rev-list --all) -- 2>/dev/null | head -20 | grep .; then
+            echo "::error::Anthropic API key found in history"
+            exit 1
+          fi
+          echo "no credential material found in history"
+
+  test:
+    name: test (py${{ matrix.python-version }})
+    needs: secret-guard
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: ledger-truth
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: ledger-truth/uv.lock
+
+      - name: Install project
+        run: uv sync --python ${{ matrix.python-version }} --extra dev
+
+      - name: Lint
+        run: uv run ruff check src tests scripts
+
+      - name: Format check
+        run: uv run ruff format --check src tests scripts
+
+      - name: Tests
+        # Hermetic by design: the unit suite must never reach the Razorpay API.
+        # Live-API checks live in scripts/spike_*.py and are run deliberately,
+        # with credentials, by a human.
+        run: uv run pytest -v

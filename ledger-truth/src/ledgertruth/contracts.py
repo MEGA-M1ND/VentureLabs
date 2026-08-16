@@ -31,10 +31,7 @@ _P = "$payment"
 
 def _no_duplicate_movement() -> Comparison:
     return (
-        RefundCount(_P)
-        .at_most(1)
-        .named("no duplicate money movement")
-        .remediate(Action.ESCALATE)
+        RefundCount(_P).at_most(1).named("no duplicate money movement").remediate(Action.ESCALATE)
     )
 
 

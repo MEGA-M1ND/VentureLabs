@@ -139,9 +139,7 @@ class LedgerSnapshot:
         # finding we can plainly see.
         refund_collection_key = f"{payment_id}:refunds"
         if refund_collection_key in self.unreadable:
-            return Lookup(
-                Presence.UNREADABLE, detail=f"refunds for {payment_id} could not be read"
-            )
+            return Lookup(Presence.UNREADABLE, detail=f"refunds for {payment_id} could not be read")
         matched = tuple(
             r
             for r in sorted(self.refunds.values(), key=lambda r: (r.created_at, r.id))

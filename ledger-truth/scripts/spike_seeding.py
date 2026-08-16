@@ -43,13 +43,25 @@ def main() -> int:
 
     print("--- payment-creation endpoint probe ---")
     probes: list[tuple[str, dict]] = [
-        ("/v1/payments/create/json", {**common, "method": "card",
-                                      "card": {"number": "4111111111111111", "cvv": "123",
-                                               "expiry_month": "12", "expiry_year": "30",
-                                               "name": "Test"}}),
+        (
+            "/v1/payments/create/json",
+            {
+                **common,
+                "method": "card",
+                "card": {
+                    "number": "4111111111111111",
+                    "cvv": "123",
+                    "expiry_month": "12",
+                    "expiry_year": "30",
+                    "name": "Test",
+                },
+            },
+        ),
         ("/v1/payments/create/ajax", {**common, "method": "card"}),
-        ("/v1/payments/create/upi", {**common, "method": "upi",
-                                     "upi": {"flow": "collect", "vpa": "success@razorpay"}}),
+        (
+            "/v1/payments/create/upi",
+            {**common, "method": "upi", "upi": {"flow": "collect", "vpa": "success@razorpay"}},
+        ),
         ("/v1/payments", {**common, "method": "card"}),
         ("/v1/payments/create/checkout", {**common, "method": "card"}),
     ]
@@ -64,7 +76,7 @@ def main() -> int:
             j = r.json()
             if not r.is_success:
                 err = j.get("error", {})
-                note = f"{err.get('code','?')}: {err.get('description','')[:80]}"
+                note = f"{err.get('code', '?')}: {err.get('description', '')[:80]}"
             else:
                 note = str(j)[:120]
         except Exception:
@@ -75,7 +87,8 @@ def main() -> int:
     print("\n--- refund capability ---")
     payments = client.get("/v1/payments", params={"count": 20}).json().get("items", [])
     refundable = [
-        p for p in payments
+        p
+        for p in payments
         if p.get("status") == "captured" and p.get("amount", 0) > p.get("amount_refunded", 0)
     ]
     if not refundable:
@@ -90,11 +103,14 @@ def main() -> int:
         print("  (pass --refund to actually create one)")
         return 0
 
-    # Idempotency: Razorpay honours a per-request idempotency key header.
+    # The header is X-Refund-Idempotency (min 10 chars). Not
+    # X-Payment-Idempotency-Key -- that name silently does nothing here, which
+    # is how the first run of this probe produced a false "no idempotency
+    # support" reading. See docs/findings.md FIND-1.
     r = client.post(
         f"/v1/payments/{pid}/refund",
         json={"amount": 100, "speed": "normal", "notes": {"src": "ledgertruth-spike"}},
-        headers={"X-Payment-Idempotency-Key": "ledgertruth-spike-001"},
+        headers={"X-Refund-Idempotency": "ledgertruth-spike-001"},
     )
     print(f"  POST refund -> {r.status_code}: {str(r.json())[:260]}")
     if not r.is_success:
@@ -114,7 +130,7 @@ def main() -> int:
     r2 = client.post(
         f"/v1/payments/{pid}/refund",
         json={"amount": 100, "speed": "normal"},
-        headers={"X-Payment-Idempotency-Key": "ledgertruth-spike-001"},
+        headers={"X-Refund-Idempotency": "ledgertruth-spike-001"},
     )
     same = r2.is_success and r2.json().get("id") == refund["id"]
     print(f"  replay same idempotency key -> {r2.status_code}, same refund id: {same}")

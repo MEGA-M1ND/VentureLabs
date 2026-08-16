@@ -1,3 +1,12 @@
+# Defence in depth: credentials must never be committed anywhere in this repo,
+# regardless of what a subproject's own .gitignore says.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
 .venv/
 __pycache__/
 *.py[cod]
@@ -7,9 +16,5 @@ dist/
 build/
 *.egg-info/
 
-# Never commit credentials or captured ledger data
-.env
-.env.local
+# Captured run data may contain live ledger identifiers.
 runs/
-*.jsonl
-!tests/**/*.jsonl
