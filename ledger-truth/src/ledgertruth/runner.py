@@ -21,8 +21,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .agent import AgentRun
-from .ledger import LedgerSnapshot
+from .ledger import LedgerSnapshot, Presence
 from .missions import Mission
+from .money import Money
+from .repair import RepairOutcome
 from .verdict import Outcome, Verdict
 
 
@@ -35,6 +37,8 @@ class RunRecord:
     snapshot: LedgerSnapshot
     #: Whether transport faults were active for this run.
     chaos: str = "none"
+    #: Arm D, when the repair layer ran.
+    repair: RepairOutcome | None = None
 
     # -- arm scoring --------------------------------------------------------
 
@@ -87,6 +91,7 @@ class RunRecord:
             "false_failure_a": self.false_failure_a,
             "duplicate_money_movement": self.duplicate_money_movement,
             "recommended_action": self.verdict.recommended_action.value,
+            "arm_d": self.repair.as_dict() if self.repair else None,
             "verdict_explain": self.verdict.explain(),
             "checks": [
                 {
@@ -139,6 +144,29 @@ def score(
     )
 
 
+def shortfall_for(mission: Mission, snapshot: LedgerSnapshot, payment_id: str) -> Money | None:
+    """How much is still owed, or None if that cannot be established.
+
+    Returns None rather than a guess whenever the mission has no repair target
+    or the refund collection could not be read -- arm D must never invent an
+    amount to refund.
+    """
+    if mission.target_refund is None:
+        return None
+
+    found = snapshot.refunds_of(payment_id)
+    if found.presence is not Presence.FOUND:
+        return None
+
+    moved = [r for r in found.value if r.moved_money]
+    already = moved[0].amount if moved else Money.zero(mission.target_refund.currency)
+    for refund in moved[1:]:
+        already = already + refund.amount
+
+    remaining = mission.target_refund - already
+    return remaining if remaining.minor > 0 else None
+
+
 def write_record(record: RunRecord, path: Path) -> None:
     """Append one record as a JSON line. Written per-run so a crash mid-suite
     keeps the runs already paid for."""
@@ -173,6 +201,15 @@ def summarize(records: list[RunRecord]) -> dict:
             "verified": sum(1 for r in records if r.arm_c is Outcome.VERIFIED),
             "failed": sum(1 for r in records if r.arm_c is Outcome.FAILED),
             "indeterminate": sum(1 for r in records if r.arm_c is Outcome.INDETERMINATE),
+        },
+        "arm_d": {
+            "ran": sum(1 for r in records if r.repair is not None),
+            "wrote": sum(1 for r in records if r.repair and r.repair.wrote),
+            "escalated": sum(1 for r in records if r.repair and r.repair.escalated),
+            "recovered": sum(1 for r in records if r.repair and r.repair.recovered),
+            "already_correct_on_reread": sum(
+                1 for r in records if r.repair and r.repair.was_already_correct
+            ),
         },
         "duplicate_money_movement": sum(1 for r in records if r.duplicate_money_movement),
         "agent_aborted": sum(1 for r in records if r.run.aborted),

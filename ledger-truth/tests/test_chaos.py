@@ -159,3 +159,21 @@ def test_records_capture_fault_and_status(upstream):
     assert records[0]["fault"] == "error_after_commit"
     assert records[0]["upstream_status"] == 200  # upstream succeeded; caller did not hear it
     assert records[1]["fault"] is None
+
+
+def test_reject_before_commit_never_reaches_upstream(upstream):
+    """The mirror of drop_after_commit: the write genuinely did not happen, so
+    a retry is the correct move rather than the dangerous one."""
+    rules = [
+        FaultRule(
+            fault="reject_before_commit",
+            method="POST",
+            path_regex=REFUND_CREATE,
+            status=503,
+        )
+    ]
+    with ChaosProxy(upstream=upstream.url, rules=rules) as proxy:
+        resp = httpx.post(f"{proxy.base_url}{REFUND_PATH}", json={"amount": 100}, timeout=10)
+        assert resp.status_code == 503
+
+    assert upstream.seen == [], "nothing must have committed upstream"

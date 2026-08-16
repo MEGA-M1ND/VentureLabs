@@ -31,7 +31,9 @@ from ledgertruth.mcp import StdioMCPClient  # noqa: E402
 from ledgertruth.missions import BY_ID, SUITE  # noqa: E402
 from ledgertruth.providers import RazorpayLedgerReader  # noqa: E402
 from ledgertruth.providers.razorpay_seed import RazorpaySeeder  # noqa: E402
-from ledgertruth.runner import score, summarize, write_record  # noqa: E402
+from ledgertruth.providers.razorpay_write import RazorpayWriter  # noqa: E402
+from ledgertruth.repair import Repairer  # noqa: E402
+from ledgertruth.runner import score, shortfall_for, summarize, write_record  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT.parent / ".tools"
@@ -45,6 +47,11 @@ def main() -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--effort", default="high")
     parser.add_argument("--chaos", default="none", choices=sorted(PROFILES))
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="enable arm D. Off by default: it can move money.",
+    )
     parser.add_argument(
         "--mcp-bin",
         default=None,
@@ -74,6 +81,10 @@ def main() -> int:
     # Seeder and reader talk to Razorpay directly, never via the proxy.
     seeder = RazorpaySeeder(key, secret)
     reader = RazorpayLedgerReader(key, secret)
+    # Arm D writes directly, never through the proxy: a repair that went via
+    # the fault would be testing the proxy, not the repair.
+    writer = RazorpayWriter(key, secret) if args.repair else None
+    repairer = Repairer(reader, writer) if args.repair else None
     records = []
 
     proxy: ChaosProxy | None = None
@@ -109,6 +120,15 @@ def main() -> int:
                     run = agent.run(mission.id, mission.prompt(pid))
                     snapshot = reader.snapshot_for_payment(pid)
                     record = score(mission, pid, run, snapshot, chaos=args.chaos)
+
+                    if repairer is not None:
+                        record.repair = repairer.repair(
+                            mission.contract(pid),
+                            pid,
+                            record.verdict,
+                            shortfall=shortfall_for(mission, snapshot, pid),
+                        )
+
                     records.append(record)
                     write_record(record, RECORDS)
 
@@ -116,6 +136,13 @@ def main() -> int:
                         f"    A={record.arm_a}  B={record.arm_b}  C={record.arm_c.value}"
                         f"  tools={len(run.tool_calls)}"
                         + (f"  faults={proxy.faults_applied}" if proxy else "")
+                        + (
+                            f"  D={record.repair.final.value}"
+                            f"{'(wrote)' if record.repair.wrote else ''}"
+                            f"{'(escalated)' if record.repair.escalated else ''}"
+                            if record.repair
+                            else ""
+                        )
                         + (f"  ABORTED={run.aborted}" if run.aborted else "")
                     )
                     if record.false_success_a or record.false_success_b:
@@ -125,6 +152,8 @@ def main() -> int:
     finally:
         seeder.close()
         reader.close()
+        if writer is not None:
+            writer.close()
         if proxy is not None:
             proxy.stop()
 

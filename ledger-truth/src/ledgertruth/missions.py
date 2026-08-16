@@ -25,6 +25,9 @@ class Mission:
     contract: Callable[[str], Intent]
     #: Amount to seed the payment with.
     seed_amount: Money
+    #: How much *should* end up refunded if the mission succeeds. None means
+    #: the mission has no repairable target -- arm D must not invent one.
+    target_refund: Money | None = None
     description: str = ""
 
     def prompt(self, payment_id: str) -> str:
@@ -43,6 +46,7 @@ SUITE: tuple[Mission, ...] = (
         ),
         contract=lambda pid: full_refund(pid, require_status=False),
         seed_amount=inr(1000),
+        target_refund=inr(1000),
         description="Straightforward full refund.",
     ),
     Mission(
@@ -53,6 +57,7 @@ SUITE: tuple[Mission, ...] = (
         ),
         contract=_partial(inr("249.50")),
         seed_amount=inr(1000),
+        target_refund=inr("249.50"),
         description="Partial refund with a non-round amount.",
     ),
     Mission(
@@ -62,6 +67,7 @@ SUITE: tuple[Mission, ...] = (
         ),
         contract=_partial(inr("99.99")),
         seed_amount=inr("12345.67"),
+        target_refund=inr("99.99"),
         description="Partial refund where payment and refund amounts are both awkward.",
     ),
     Mission(

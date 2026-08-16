@@ -141,6 +141,60 @@ gets fixed quietly.
 
 ---
 
+## FIND-5: Two faults that look identical to the tool require opposite responses
+
+**2026-08-16.** The clearest statement of what an independent ledger read buys.
+
+Two transport faults, both surfacing to the agent as "the refund call failed":
+
+| | `drop_after_commit` | `reject_before_commit` |
+|---|---|---|
+| Reached the payment API | **yes** | **no** |
+| Refund actually created | **yes** | **no** |
+| What the tool reports | error | error |
+| Correct response | **do nothing** | **retry** |
+| Wrong response costs | a duplicate refund | an unrefunded customer |
+
+**The tool response is identical in both cases and cannot distinguish them.**
+Neither can the agent's own claim, which is downstream of the same information.
+The only thing that separates them is reading the ledger.
+
+Observed live, one run each:
+
+| Fault | Arm A | Arm B | Arm C | Arm D |
+|---|---|---|---|---|
+| `drop_after_commit` | success | error | VERIFIED | no-op, **no write** |
+| `reject_before_commit` | failure | error | FAILED | **wrote**, → VERIFIED |
+
+Arm D's steps in the second case were `reread` → `retry_idempotent` → `confirm`:
+it re-read before writing, confirmed the shortfall was real, wrote once with a
+derived `X-Refund-Idempotency` key, then re-verified. In the first case it
+short-circuited on the already-verified state and issued nothing.
+
+This is why the repair layer reads before it writes, and why a harness that
+retries on tool error is unsafe: that harness cannot tell these two apart, so it
+must either duplicate refunds in the first case or abandon customers in the
+second. There is no tuning of the retry policy that fixes it — the information
+required is not present in the tool response.
+
+Note also that the agent reported honestly in both directions: it claimed
+success where the refund had landed, and failure where it had not ("two attempts
+to create a full refund were rejected by the gateway; no refund was created").
+Arm A tracked arm C on both. Arm B tracked neither.
+
+### Arm D's safety rules, as exercised
+
+1. **Re-read before writing** — the only reason the first case wrote nothing.
+2. **Never auto-act on excess money movement** — `ESCALATE` is terminal; there
+   is no safe automatic way to un-refund a customer.
+3. **Never write on `INDETERMINATE`** — not knowing is not the same as knowing
+   it failed.
+4. **Never invent an amount** — no known shortfall means escalate, not guess.
+
+Each is asserted in `tests/test_repair.py` rather than left to review.
+
+---
+
 ## FIND-4: The agent survives a dropped refund response — and arm B is the thing that gets it wrong
 
 **2026-08-16. n=7, single model, single fault type. Preliminary.**
