@@ -12,6 +12,7 @@ which looks exactly like a hung agent.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -41,6 +42,9 @@ class ToolCallRecord:
 class StdioMCPClient:
     argv: list[str]
     timeout: float = 60.0
+    #: Extra environment for the subprocess, merged over os.environ. Used to
+    #: point the server's SDK at the chaos proxy via RAZORPAY_API_BASE_URL.
+    env: dict[str, str] | None = None
     _proc: subprocess.Popen | None = field(default=None, repr=False)
     _id: int = 0
     _stderr: list[str] = field(default_factory=list, repr=False)
@@ -60,6 +64,7 @@ class StdioMCPClient:
         self.close()
 
     def start(self) -> None:
+        child_env = {**os.environ, **self.env} if self.env else None
         self._proc = subprocess.Popen(
             self.argv,
             stdin=subprocess.PIPE,
@@ -68,6 +73,7 @@ class StdioMCPClient:
             text=True,
             encoding="utf-8",
             bufsize=1,
+            env=child_env,
         )
         threading.Thread(target=self._drain_stderr, daemon=True).start()
 
