@@ -5,7 +5,11 @@ The decomposition here is the point. A naive contract says
 directions of that deviation are completely different incidents:
 
 * refunded **less** than intended -> the operation is incomplete. An
-  idempotency-keyed retry is safe and appropriate.
+  idempotency-keyed retry is safe and appropriate -- but only if the repair
+  layer supplies the key *itself*. It must not assume the agent's tooling did:
+  Razorpay's own MCP server passes `nil` for extra headers and so sends no
+  `X-Refund-Idempotency` at all (see docs/findings.md, FIND-1). `RETRY_IDEMPOTENT`
+  names an obligation on the repairer, not an observed property of the call.
 * refunded **more** than intended -> money left the merchant that should not
   have. There is no safe automatic remedy; clawing it back means charging a
   customer again. This escalates to a human, always.

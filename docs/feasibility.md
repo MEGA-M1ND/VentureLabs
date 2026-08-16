@@ -104,19 +104,32 @@ Windows 11 Home pulls in a WSL2 install. Go is also required for Path A above.
 
 ## F-3: Razorpay test-mode access
 
-**Status: OPEN — blocking, and only the account holder can resolve it.**
+**Status: PASSED — 2026-08-16.** No Stripe fallback needed.
 
-Unverified and load-bearing:
+Verified against live test mode with `rzp_test_…` credentials:
 
-- do test-mode keys (`rzp_test_…`) issue without completed business KYC?
-- does `create_refund` function in test mode?
-- do test-mode webhooks fire?
-- do settlement and reconciliation endpoints return usable test data?
+| Check | Result |
+|---|---|
+| Authentication | `200` |
+| Order creation | `200` |
+| Captured payment obtainable | yes — see [FIND-2](findings.md) |
+| Refund creation | `200`, refund id returned |
+| Refund read-back (`GET /v1/refunds/{id}`) | `200` |
+| Refunds-for-payment listing | `200` |
+| Settlements (`GET /v1/settlements`) | `200` |
+| Recon (`GET /v1/settlements/recon/combined`) | `200` |
+| Refund idempotency | supported — see [FIND-1](findings.md) |
 
-If test mode is gated behind business verification, fall back to **Stripe test
-mode** (no KYC, instant). The verification core is provider-agnostic by
-construction, so the port is a new provider adapter rather than a rewrite — but
-the Razorpay-specific narrative would be lost, and the target would shift toward
-generic payments and OpenAI/Anthropic FDE.
+Every read the provider adapter needs is available, and every write the mission
+suite needs is available.
 
-Decide this before building the provider adapter, not after.
+**Still unverified:** whether test-mode **webhooks** fire. Not blocking — the
+verifier reads state directly rather than depending on webhook delivery — but it
+is needed if the mission suite is to include webhook-driven reconciliation
+tasks. Check before designing those missions.
+
+Reproduce with:
+
+```bash
+uv run python scripts/spike_feasibility.py
+```
