@@ -82,11 +82,41 @@ which is what the experiment measures.
    actually does — is a small, self-contained, obviously-correct contribution to
    `razorpay/razorpay-mcp-server`.
 
+### Confirmed at the agent-facing surface, not just in source
+
+Source inspection shows the intent; the tool schema shows what a model actually
+sees. Built `razorpay-mcp-server` at commit `7950d51` (current `main`) with Go
+1.26.5 and drove it over MCP stdio:
+
+```
+initialized: razorpay-mcp-server 1.0.0
+tools exposed: 45
+  create_refund                        PRESENT
+create_refund parameters: ['amount', 'notes', 'payment_id', 'receipt', 'speed']
+  idempotency parameter exposed: False
+  receipt description: 'A unique identifier provided by you for your internal reference.'
+```
+
+There is **no idempotency parameter in the tool schema at all**. The only field
+that could serve as one is presented to the model as bookkeeping. A model given
+this schema has no way to know that safe retry is available, let alone how to
+request it.
+
+This also confirms `create_refund` is exposed by the **local** build, as
+expected — the hosted remote server withholds it, which is why the harness needs
+a local binary.
+
+Reproduce with:
+
+```bash
+uv run python scripts/spike_mcp.py
+```
+
 ### Caveat
 
-Verified in **test mode** on a single account, on 2026-08-16. Before publishing,
-confirm the same `extraHeaders: nil` on the then-current `main`, and re-run the
-header and `receipt` probes — this is the kind of thing that gets fixed quietly.
+Verified in **test mode** on a single account, on 2026-08-16, against commit
+`7950d51`. Re-run both probes before publishing — this is the kind of thing that
+gets fixed quietly.
 
 ---
 

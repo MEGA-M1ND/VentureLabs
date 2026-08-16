@@ -18,3 +18,6 @@ build/
 
 # Captured run data may contain live ledger identifiers.
 runs/
+
+# Locally-built third-party binaries and their sources (razorpay-mcp-server).
+.tools/
