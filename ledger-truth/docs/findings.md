@@ -77,10 +77,31 @@ which is what the experiment measures.
 2. **`RETRY_IDEMPOTENT` remediation must supply the header itself.** Our repair
    layer cannot assume the agent's tooling provided one. It must send
    `X-Refund-Idempotency` explicitly, or read-then-decide.
-3. **This is the first PR.** Setting `extraHeaders` from a tool-level
-   idempotency parameter — and amending the `receipt` description to say what it
-   actually does — is a small, self-contained, obviously-correct contribution to
-   `razorpay/razorpay-mcp-server`.
+3. **Filed upstream:**
+   [razorpay/razorpay-mcp-server#128](https://github.com/razorpay/razorpay-mcp-server/pull/128)
+   adds an optional `idempotency_key` parameter wired to `X-Refund-Idempotency`,
+   and amends the `receipt` description to say what it actually does.
+
+### The fix, verified end to end
+
+Built the patched branch and drove it over MCP stdio against live test mode.
+The parameter appears in the schema:
+
+```
+create_refund parameters: ['amount', 'idempotency_key', 'notes', 'payment_id', 'receipt', 'speed']
+```
+
+Two `create_refund` calls with the same key, through the MCP tool surface:
+
+```
+call 1 -> refund id rfnd_TQWWggEvedFT8W
+call 2 -> refund id rfnd_TQWWggEvedFT8W
+refunds on payment: 1
+```
+
+Against three unpatched calls producing three refunds. This is the control the
+experiment needs: with the patch, arm D's `RETRY_IDEMPOTENT` remediation is
+genuinely safe; without it, a retry is a second refund.
 
 ### Confirmed at the agent-facing surface, not just in source
 
