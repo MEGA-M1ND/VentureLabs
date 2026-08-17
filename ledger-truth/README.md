@@ -9,22 +9,36 @@ When an agent operates a real payment API, "the tool returned an error" and
 
 ## The result
 
-Claude Opus 5 driving **Razorpay's own MCP server** against **live test mode**,
-with transport faults injected between the server and the API. 16 runs.
+Agents driving **Razorpay's own MCP server** against **live test mode**, with
+transport faults injected between the server and the API. 166 runs.
 
-| Fault injected | n | Agent's claim correct | Tool response correct | Ledger verdict | Duplicate refunds |
-|---|--:|--:|--:|--:|--:|
-| none | 5 | 5/5 | 5/5 | 5 VERIFIED | 0 |
-| response dropped **after** the refund committed | 8 | **8/8** | **0/8** | 8 VERIFIED | 0 |
-| refund rejected **before** it committed | 3 | 3/3 | 3/3 | 3 FAILED | 0 |
+**Duplicate refund rate when a response is dropped after the refund committed:**
 
-**The tool response was wrong on 8 of 16 runs. The agent's own report was wrong
-on none of them.**
+| Model | Retried instead of re-reading | **Refunded twice** | Falsely claimed success |
+|---|--:|--:|--:|
+| `claude-opus-5` @ high | 0/10 | **0%** | 0/10 |
+| `claude-opus-5` @ low | 0/10 | **0%** | 0/10 |
+| `claude-sonnet-5` @ high | 5/10 | **50%** | 5/10 |
+| `claude-sonnet-5` @ low | 4/10 | **40%** | 4/10 |
+| `claude-haiku-4-5` | 10/10 | **100%** | 10/10 |
 
-That inverts the usual framing. The danger measured here was not an agent
-claiming success it hadn't earned — it was the *tooling* reporting failure for
-work that had already succeeded. A harness that retries on that signal issues a
-second refund.
+Every retry became a duplicate — the two columns are equal in every cell, with
+zero exceptions across 50 runs.
+
+**And two concurrent agents duplicate 100% of the time even on Opus at high
+effort, with no fault injected at all.** An idempotency key stops it; nothing
+else tested does.
+
+Three separate failures, one detector:
+
+- **On Opus**, the *tool response* is the liar — it reports failure for a refund
+  that already committed, and the agent correctly ignores it.
+- **Below Opus**, the *agent* lies too. Haiku claimed success on all ten payments
+  it had just refunded twice.
+- **Under concurrency**, even Opus duplicates, because re-reading before acting
+  is check-then-use.
+
+Arm C — an independent read of the ledger — caught all three.
 
 ### Why the tool response cannot be fixed by retrying harder
 
@@ -111,8 +125,9 @@ review: re-read before writing; never auto-act on excess money movement; never
 write on `INDETERMINATE`; never invent an amount to refund.
 
 Across 4 repair runs it wrote 3 times, no-opped once (the ledger was already
-correct), escalated 0 times, and ended `VERIFIED` every time. **Zero duplicate
-refunds across all 16 runs.**
+correct), escalated 0 times, and ended `VERIFIED` every time. The no-op is the
+one that matters: under a dropped response the ledger was already correct, and
+writing there is what would have created the duplicate.
 
 ---
 
@@ -133,13 +148,18 @@ network.
 
 ## Limits
 
-16 runs, one model (`claude-opus-5`), one effort level (`high`), one provider,
-four mission types. This establishes that the behaviours exist and repeat under
-these conditions. It does not establish rates, and the central claim of
-[FIND-4](docs/findings.md) — that correct recovery is *behavioural* rather than
-guaranteed by the platform — predicts that a weaker model, a lower effort
-setting, or a terser prompt would change the result. That sweep is the obvious
-next experiment.
+166 runs across three models, two effort levels, one provider, four mission
+types. Rates are indicative, not precise: 10 runs per cell means a 100% cell
+reads as "reliably, in this configuration", not "always". The cliff between Opus
+and everything below it is far larger than that noise, which is the part worth
+acting on.
+
+One control matters more than the sample size. The identical ladder run against
+a **full** refund produced 29 retries and **zero** duplicates, because Razorpay
+rejects a second full refund on amount grounds. Same models, same fault, same
+retry behaviour, no measurable harm. Benchmark agent payment safety with full
+refunds and you will measure a system that looks safe while the models under
+test retry blind money movements at up to 100%.
 
 ## Reproducing
 
@@ -149,6 +169,9 @@ uv run pytest                                          # 83 tests, no network
 uv run python scripts/spike_feasibility.py             # verify test-mode access
 uv run python scripts/seed_payments.py --count 10      # mint captured payments
 uv run python scripts/run_missions.py --chaos drop_refund_response --repeats 2
+uv run python scripts/race.py --rounds 3                   # concurrency (FIND-6)
+uv run python scripts/sweep.py --mission partial_refund_249_50   # model ladder (FIND-7)
+uv run python scripts/analyze_sweep.py --file runs/sweep_partial.jsonl
 ```
 
 Needs Razorpay **test-mode** keys and a locally built `razorpay-mcp-server`
@@ -170,6 +193,11 @@ Full write-ups in [docs/findings.md](docs/findings.md), feasibility notes in
   rather than retrying; arm B was wrong on all 8.
 - **FIND-5** — The two faults are indistinguishable to the tool and require
   opposite responses.
+- **FIND-6** — Re-reading before acting does not survive concurrency: two agents
+  duplicated 3/3 with no fault injected. A shared idempotency key stopped it
+  0/7 vs 7/7.
+- **FIND-7** — Duplicate rate by model: 0% on Opus, 40–50% on Sonnet, 100% on
+  Haiku. Every retry landed. Below Opus the agent's self-report fails too.
 
 ## Licence
 

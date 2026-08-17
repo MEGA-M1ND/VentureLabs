@@ -6,18 +6,28 @@ Experiments in agent reliability infrastructure.
 
 ### [`ledger-truth/`](ledger-truth/) — does the agent's refund actually happen?
 
-Claude Opus 5 driving **Razorpay's own MCP server** against **live test mode**,
+Claude agents driving **Razorpay's own MCP server** against **live test mode**,
 with transport faults injected between the server and the API. An independent
 verifier reads the ledger by a path the agent never touches.
 
-**Across 16 runs the tool responses were wrong 8 times. The agent's own reports
-were wrong 0 times.**
+**Duplicate refund rate when the network drops a response after the refund has
+already committed** — 166 runs:
 
-The reason is the finding: two faults — a response dropped *after* the refund
-committed, and a request rejected *before* it committed — are indistinguishable
-to the caller and require opposite responses (do nothing vs. retry). Getting it
-wrong means either a duplicate refund or an unrefunded customer. No retry policy
-separates them, because the information isn't in the tool response.
+| Model | Refunded twice | Falsely claimed success |
+|---|--:|--:|
+| `claude-opus-5` (high and low effort) | **0%** | 0/20 |
+| `claude-sonnet-5` (high / low) | **50% / 40%** | 9/20 |
+| `claude-haiku-4-5` | **100%** | 10/10 |
+
+Every retry became a duplicate, in every cell, without exception. And two
+concurrent agents duplicate **100% of the time even on Opus at high effort, with
+no fault injected at all** — re-reading before acting is check-then-use, and
+check-then-use has a window. A shared idempotency key was the only mitigation
+that held.
+
+On Opus the *tool response* is the liar; below Opus the *agent* lies too. An
+independent ledger read caught both, plus the concurrency case neither signal
+sees.
 
 Also surfaced a real gap in Razorpay's integration: their MCP server never sends
 the idempotency header their own refund API supports, and the tool schema offers
