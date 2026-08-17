@@ -4,32 +4,33 @@ Experiments in agent reliability infrastructure.
 
 ## Active
 
-### [`ledger-truth/`](ledger-truth/) — independent outcome verification for agents that move money
+### [`ledger-truth/`](ledger-truth/) — does the agent's refund actually happen?
 
-When an LLM agent operates a real payment API through MCP, how often does it
-report success while the ledger is in a different state than intended — and does
-independent verification catch it?
+Claude Opus 5 driving **Razorpay's own MCP server** against **live test mode**,
+with transport faults injected between the server and the API. An independent
+verifier reads the ledger by a path the agent never touches.
 
-Tracing answers *what the system did*. Durable execution answers *whether
-execution survived*. Neither answers *whether the world is now in the intended
-state*. That last question is what this measures.
+**Across 16 runs the tool responses were wrong 8 times. The agent's own reports
+were wrong 0 times.**
 
-Runs against **Razorpay test mode** via Razorpay's own MCP server. Ground truth
-is always the real provider ledger; the injected faults are transport-layer only
-(dropped-after-commit responses, delays, duplicate delivery), so the failure
-modes are properties of networks rather than bugs authored for this repo.
+The reason is the finding: two faults — a response dropped *after* the refund
+committed, and a request rejected *before* it committed — are indistinguishable
+to the caller and require opposite responses (do nothing vs. retry). Getting it
+wrong means either a duplicate refund or an unrefunded customer. No retry policy
+separates them, because the information isn't in the tool response.
 
-**Status:** verification core built and tested; test-mode feasibility gate
-passed; no agent measurements taken yet.
+Also surfaced a real gap in Razorpay's integration: their MCP server never sends
+the idempotency header their own refund API supports, and the tool schema offers
+no way to request one. Filed upstream as
+[razorpay/razorpay-mcp-server#128](https://github.com/razorpay/razorpay-mcp-server/pull/128).
 
-First finding, before the harness exists —
-[`docs/findings.md`](ledger-truth/docs/findings.md):
+- [Write-up](ledger-truth/docs/writeup.md) — the full story
+- [Findings](ledger-truth/docs/findings.md) — FIND-1 through FIND-5
+- [README](ledger-truth/) — design decisions, methodology, limits
 
-> Razorpay's refund API supports idempotency via `X-Refund-Idempotency`, but the
-> official MCP server passes `nil` for extra headers and never sends it, while
-> describing `receipt` (the alternative idempotency key) only as "a unique
-> identifier provided by you for your internal reference". An agent that retries
-> after a dropped response therefore double-refunds by default.
+```bash
+cd ledger-truth && uv run python scripts/demo.py
+```
 
 ## Not being built
 

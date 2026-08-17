@@ -21,3 +21,6 @@ runs/
 
 # Locally-built third-party binaries and their sources (razorpay-mcp-server).
 .tools/
+
+# Local working notes, never published.
+private/
