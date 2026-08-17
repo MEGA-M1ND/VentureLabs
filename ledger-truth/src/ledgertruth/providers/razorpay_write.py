@@ -64,17 +64,26 @@ class RazorpayWriter:
         amount: Money,
         *,
         idempotency_key: str | None = None,
+        send_key: bool = True,
     ) -> dict:
         """Create a refund, idempotently.
 
         Replaying this call with the same derived key returns the original
         refund rather than creating a second one.
+
+        `send_key=False` deliberately omits the header. That is never correct in
+        production -- it exists so an experiment can isolate the effect of the
+        key from the effect of the race it protects against.
         """
-        key = idempotency_key or idempotency_key_for(payment_id, amount)
+        headers = {}
+        if send_key:
+            headers["X-Refund-Idempotency"] = idempotency_key or idempotency_key_for(
+                payment_id, amount
+            )
         response = self._client.post(
             f"/v1/payments/{payment_id}/refund",
             json={"amount": amount.minor},
-            headers={"X-Refund-Idempotency": key},
+            headers=headers,
         )
         if not response.is_success:
             detail = ""

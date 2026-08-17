@@ -27,6 +27,19 @@ from .mcp import StdioMCPClient, ToolCallRecord, to_anthropic_tools
 
 DEFAULT_MODEL = "claude-opus-5"
 
+#: Models that reject `output_config.effort` with a 400. Sweeping without this
+#: turns a capability mismatch into a run that looks like a task failure, which
+#: would quietly corrupt any comparison across the model ladder.
+MODELS_WITHOUT_EFFORT = frozenset({"claude-haiku-4-5", "claude-haiku-4-5-20251001"})
+
+
+def request_extras(model: str, effort: str | None) -> dict:
+    """Per-model request parameters, so one sweep can span the ladder."""
+    if effort is None or model in MODELS_WITHOUT_EFFORT:
+        return {}
+    return {"output_config": {"effort": effort}}
+
+
 #: The agent is asked to end with a machine-readable claim. This is arm A: an
 #: agent reporting completion to whatever called it, which is what real
 #: deployments do. The wording is deliberately neutral about which answer is
@@ -56,6 +69,8 @@ class AgentRun:
     model: str
     started_at: datetime
     finished_at: datetime
+    #: None when the model does not accept an effort setting.
+    effort: str | None = None
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
     final_text: str = ""
     #: The agent's parsed self-report. None when it never emitted one.
@@ -98,6 +113,7 @@ class AgentRun:
         return {
             "mission_id": self.mission_id,
             "model": self.model,
+            "effort": self.effort,
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat(),
             "duration_seconds": self.duration_seconds,
@@ -142,7 +158,7 @@ class AgentUnderTest:
         mcp: StdioMCPClient,
         *,
         model: str = DEFAULT_MODEL,
-        effort: str = "high",
+        effort: str | None = "high",
         max_tokens: int = 16000,
         max_turns: int = 25,
         allowed_tools: set[str] | None = None,
@@ -165,8 +181,13 @@ class AgentUnderTest:
 
     def run(self, mission_id: str, prompt: str) -> AgentRun:
         started = datetime.now(tz=UTC)
+        effort = self._effort if self._model not in MODELS_WITHOUT_EFFORT else None
         run = AgentRun(
-            mission_id=mission_id, model=self._model, started_at=started, finished_at=started
+            mission_id=mission_id,
+            model=self._model,
+            effort=effort,
+            started_at=started,
+            finished_at=started,
         )
         tools = self._tools()
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
@@ -186,9 +207,9 @@ class AgentUnderTest:
                         "cache_control": {"type": "ephemeral"},
                     }
                 ],
-                output_config={"effort": self._effort},
                 tools=tools,
                 messages=messages,
+                **request_extras(self._model, self._effort),
             )
             run.input_tokens += response.usage.input_tokens
             run.output_tokens += response.usage.output_tokens

@@ -141,6 +141,108 @@ gets fixed quietly.
 
 ---
 
+## FIND-6: Re-reading before acting does not survive concurrency
+
+**2026-08-17. A1 n=3, A2 n=7, A3 n=7. No fault injection in A1.**
+
+[FIND-4](#find-4) found the agent recovering from a dropped response by
+re-reading before it acted, and credited that as the reason no duplicate refund
+ever occurred. This attacks that result, because read-then-act is
+check-then-use, and check-then-use has a window.
+
+Three arms, each on a freshly minted ₹1,000 payment:
+
+| Arm | What races | Idempotency key | n | Duplicated |
+|---|---|---|--:|--:|
+| **A1** | two real agents, same mission, same payment | none available | 3 | **3 (100%)** |
+| **A2** | two direct writes | **omitted** | 7 | **7 (100%)** |
+| **A3** | two direct writes | **shared, derived** | 7 | **0 (0%)** |
+
+A2 and A3 differ by exactly one HTTP header.
+
+**A1 used no fault injection at all.** No dropped responses, no delays, no proxy
+— two agents were handed the same refund task and started together. That is not
+an exotic scenario: it is two support agents on one ticket, or a job retried off
+a queue while the first attempt is still running.
+
+### The careful agent lost too
+
+The two agents did not behave identically, and the difference is the finding:
+
+```
+agent 1: fetch_payment -> create_refund -> fetch_payment
+agent 2: fetch_payment -> fetch_multiple_refunds_for_payment -> create_refund
+         -> fetch_payment -> fetch_multiple_refunds_for_payment -> update_refund
+```
+
+Agent 2 read the refund list **before** writing — strictly more verification than
+agent 1, and exactly the behaviour FIND-4 praised. It still raced, and ₹499.00
+left the merchant where ₹249.50 was intended.
+
+More checking does not close a TOCTOU window. It only narrows it.
+
+Agent 2 then noticed the duplicate afterwards and reported honestly
+(`"succeeded": false`, naming both refunds), which keeps arm A's perfect record
+intact across every experiment so far. But post-hoc honesty does not un-refund a
+customer. **Detection is not prevention.**
+
+### What this does to the earlier findings
+
+FIND-4's zero-duplicate result stands for the *sequential* case and is now
+properly bounded: it was never evidence that the agent's strategy is safe, only
+that it is safe when nothing else is touching the same payment. The moment a
+second actor exists, the strategy fails in 3 out of 3 attempts.
+
+And it sharpens what [FIND-1](#find-1) is asking for. An idempotency key is not
+hygiene or defence-in-depth here — under concurrency it is **the only thing that
+worked**, at 0% versus 100%, with everything else held constant. That is what
+[PR #128](https://github.com/razorpay/razorpay-mcp-server/pull/128) adds, and an
+agent driving the MCP server today cannot request it.
+
+### Two things the data showed that I did not expect
+
+**The key behaves differently under concurrency than sequentially.** Replaying a
+key on a settled refund returns the original refund (FIND-1). Racing two requests
+on the same key returns `409 Another request with the same idempotency key is
+still in progress` to the loser. Both prevent the duplicate, but a caller that
+treats 409 as retryable will hammer a refund endpoint. Worth knowing before you
+build a retry policy around it.
+
+**A full-size refund is protected by arithmetic, not by safety.** See the method
+note below.
+
+### Method note — a confound I had to correct
+
+The first version of this experiment raced two *full* refunds and found **zero**
+duplicates in either arm, which looked like a clean negative result. It was
+wrong. Razorpay rejects the second full refund on amount grounds — *"the total
+refund amount is greater than the refund payment amount"* — so both arms were
+being protected by the payment ceiling rather than by anything about
+concurrency, and they looked identical for unrelated reasons.
+
+Every arm now refunds a fraction of the payment (₹100 or ₹249.50 out of ₹1,000),
+small enough that two concurrent refunds both fit and only a genuine race guard
+can stop the second. The corrected design flipped A2 from 0% to 100%.
+
+Anyone reproducing this should size the refund the same way, or they will
+measure the ceiling and conclude the system is safe.
+
+### Limits
+
+Small n, one provider, one model for A1. A1's 100% rate reflects a deliberately
+tight race (both agents released from a barrier); a real deployment's rate
+depends entirely on how often two actors touch one payment at once. The claim
+here is not a rate — it is that the failure exists, is reachable without any
+injected fault, and is closed by the key and by nothing else tested.
+
+Reproduce with:
+
+```bash
+uv run python scripts/race.py --rounds 3
+```
+
+---
+
 ## FIND-5: Two faults that look identical to the tool require opposite responses
 
 **2026-08-16.** The clearest statement of what an independent ledger read buys.
