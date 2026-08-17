@@ -104,3 +104,28 @@ def no_refund_occurred(payment_id: str) -> Intent:
         bindings={"payment": payment_id},
         description=f"no refund exists against payment {payment_id}",
     )
+
+
+def capture_payment(payment_id: str) -> Intent:
+    """The authorized payment should be captured for its full amount.
+
+    Unlike a refund, a duplicate capture attempt cannot move money twice --
+    Razorpay's API rejects a second capture on the same payment with a plain
+    'already captured' error, because status is a single field on one object
+    rather than a new line item each call. That makes this contract's only
+    interesting failure direction the other one: an agent that reads that
+    rejection and reports the capture failed, when the ledger shows it plainly
+    succeeded. REREAD, not ESCALATE -- there is nothing here a human needs to
+    adjudicate, only a re-read the agent should have done itself.
+    """
+    return Intent(
+        action="capture_payment",
+        invariants=(
+            PaymentStatusOf(_P)
+            .equals(PaymentStatus.CAPTURED)
+            .named("payment captured")
+            .remediate(Action.REREAD),
+        ),
+        bindings={"payment": payment_id},
+        description=f"capture payment {payment_id}",
+    )

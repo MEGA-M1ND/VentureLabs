@@ -5,7 +5,7 @@ The question this package answers is not "what did the agent do?" (tracing) or
 the agent claims it is in?"
 """
 
-from .contracts import full_refund, no_refund_occurred, partial_refund
+from .contracts import capture_payment, full_refund, no_refund_occurred, partial_refund
 from .intent import Intent
 from .invariants import (
     Comparison,
@@ -50,6 +50,7 @@ __all__ = [
     "RefundStatus",
     "RefundTotal",
     "Verdict",
+    "capture_payment",
     "full_refund",
     "inr",
     "no_refund_occurred",

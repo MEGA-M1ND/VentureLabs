@@ -276,10 +276,20 @@ class ChaosProxy:
 #: The refund-creation path, which is where the interesting faults belong.
 REFUND_CREATE = r"/v1/payments/[^/]+/refund"
 
+#: The explicit-capture path -- a write that is state-gated rather than
+#: idempotency-keyed, so the same fault exercises a different failure mode
+#: (false failure report on a rejected retry, not duplicate money movement).
+CAPTURE_PATH = r"/v1/payments/[^/]+/capture"
+
 
 def drop_first_refund_response() -> list[FaultRule]:
     """The canonical scenario: the first refund commits, its response is lost."""
     return [FaultRule(fault="drop_after_commit", method="POST", path_regex=REFUND_CREATE)]
+
+
+def drop_first_capture_response() -> list[FaultRule]:
+    """Same fault, aimed at capture_payment instead of create_refund."""
+    return [FaultRule(fault="drop_after_commit", method="POST", path_regex=CAPTURE_PATH)]
 
 
 @dataclass
@@ -319,4 +329,5 @@ PROFILES: dict[str, ChaosConfig] = {
             )
         ],
     ),
+    "drop_capture_response": ChaosConfig("drop_capture_response", drop_first_capture_response()),
 }

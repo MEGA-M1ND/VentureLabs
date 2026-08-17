@@ -29,7 +29,19 @@ zero exceptions across 50 runs.
 effort, with no fault injected at all.** An idempotency key stops it; nothing
 else tested does.
 
-Three separate failures, one detector:
+**Widening the audit past refunds finds the same retry habit produce opposite
+outcomes depending on the endpoint.** Of the MCP server's 18 write tools, only
+`create_refund` sits on a Razorpay endpoint documented to support an
+idempotency key — payouts and transfers are the other two, and neither has a
+create tool exposed. `capture_payment` has no key and no fix available, but
+Razorpay's own state machine blocks a second capture outright. Sonnet retried
+`capture_payment` in 8/8 runs — the *same* behaviour that duplicated refunds
+40–50% of the time — and caused zero harm, because the endpoint bounces the
+retry instead of letting it land twice. Haiku's one miss wasn't a retry at
+all: it read a dropped response as failure and reported a successfully
+captured payment as broken, with no re-read.
+
+Four separate failures, one detector:
 
 - **On Opus**, the *tool response* is the liar — it reports failure for a refund
   that already committed, and the agent correctly ignores it.
@@ -37,8 +49,11 @@ Three separate failures, one detector:
   it had just refunded twice.
 - **Under concurrency**, even Opus duplicates, because re-reading before acting
   is check-then-use.
+- **Off refunds**, the same retry habit is sometimes harmless and sometimes
+  not — the endpoint decides, not the model, and only one endpoint out of
+  eighteen has a real fix available.
 
-Arm C — an independent read of the ledger — caught all three.
+Arm C — an independent read of the ledger — caught all four.
 
 ### Why the tool response cannot be fixed by retrying harder
 
@@ -161,6 +176,14 @@ retry behaviour, no measurable harm. Benchmark agent payment safety with full
 refunds and you will measure a system that looks safe while the models under
 test retry blind money movements at up to 100%.
 
+FIND-8 audited the other 17 write tools statically and measured one of them
+(`capture_payment`) live, 24 runs. It deliberately did not reach
+`initiate_payment` or `create_instant_settlement` — the two tools with the
+least apparent protection and the highest stakes — because both need an async
+completion step this pass didn't build. Treat the write surface as
+one-tool-measured-safe, one-tool-measured-risky-but-bounded, and sixteen
+tools unaudited, not as "checked."
+
 ## Reproducing
 
 ```bash
@@ -172,6 +195,7 @@ uv run python scripts/run_missions.py --chaos drop_refund_response --repeats 2
 uv run python scripts/race.py --rounds 3                   # concurrency (FIND-6)
 uv run python scripts/sweep.py --mission partial_refund_249_50   # model ladder (FIND-7)
 uv run python scripts/analyze_sweep.py --file runs/sweep_partial.jsonl
+uv run python scripts/audit_capture.py --runs 8              # write-safety audit (FIND-8)
 ```
 
 Needs Razorpay **test-mode** keys and a locally built `razorpay-mcp-server`
@@ -198,6 +222,10 @@ Full write-ups in [docs/findings.md](docs/findings.md), feasibility notes in
   0/7 vs 7/7.
 - **FIND-7** — Duplicate rate by model: 0% on Opus, 40–50% on Sonnet, 100% on
   Haiku. Every retry landed. Below Opus the agent's self-report fails too.
+- **FIND-8** — Audited all 18 write tools: only refund sits on an endpoint
+  with a native idempotency-key fix available. `capture_payment` has none but
+  is state-gated, so the same retry habit that duplicates refunds does zero
+  harm there — Haiku instead falsely reported a captured payment as failed.
 
 ## Licence
 

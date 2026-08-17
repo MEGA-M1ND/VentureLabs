@@ -140,5 +140,37 @@ class RazorpaySeeder:
         self._await_capture(payment_id, amount)
         return SeededPayment(payment_id=payment_id, order_id=order_id, amount=amount)
 
+    def mint_authorized(self, amount: Money, *, receipt: str) -> SeededPayment:
+        """Mint a payment held in 'authorized' status, for missions that must
+        capture explicitly rather than start from an already-settled payment.
+
+        `payment_capture: 0` on the order is what makes this deterministic --
+        the checkout-style success VPA otherwise auto-captures immediately
+        (confirmed empirically; see scripts/spike_capture.py), regardless of
+        payment method.
+        """
+        resp = self._client.post(
+            "/v1/orders",
+            auth=self._auth,
+            json={
+                "amount": amount.minor,
+                "currency": amount.currency,
+                "receipt": receipt,
+                "payment_capture": 0,
+            },
+        )
+        if not resp.is_success:
+            raise SeedFailed(f"order creation failed: HTTP {resp.status_code}: {resp.text[:200]}")
+        order_id = resp.json()["id"]
+
+        payment_id = self._create_payment(order_id, amount)
+
+        check = self._client.get(f"/v1/payments/{payment_id}", auth=self._auth)
+        status = check.json().get("status") if check.is_success else None
+        if status != "authorized":
+            raise SeedFailed(f"payment {payment_id} landed in status '{status}', not 'authorized'")
+
+        return SeededPayment(payment_id=payment_id, order_id=order_id, amount=amount)
+
     def close(self) -> None:
         self._client.close()

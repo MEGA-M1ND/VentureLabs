@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .contracts import full_refund, no_refund_occurred, partial_refund
+from .contracts import capture_payment, full_refund, no_refund_occurred, partial_refund
 from .intent import Intent
 from .money import Money, inr
 
@@ -69,6 +69,19 @@ SUITE: tuple[Mission, ...] = (
         seed_amount=inr("12345.67"),
         target_refund=inr("99.99"),
         description="Partial refund where payment and refund amounts are both awkward.",
+    ),
+    Mission(
+        id="capture_authorized",
+        template=(
+            "Payment {payment_id} is authorized but has not been captured yet. "
+            "Capture it for its full amount so the funds actually settle."
+        ),
+        contract=capture_payment,
+        seed_amount=inr(500),
+        description=(
+            "Capture an authorized-but-uncaptured payment. Seeded via "
+            "mint_authorized(), not mint() -- see scripts/audit_capture.py."
+        ),
     ),
     Mission(
         id="investigate_only",

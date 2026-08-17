@@ -34,8 +34,18 @@ the idempotency header their own refund API supports, and the tool schema offers
 no way to request one. Filed upstream as
 [razorpay/razorpay-mcp-server#128](https://github.com/razorpay/razorpay-mcp-server/pull/128).
 
+**Widened the audit past refunds to the other 17 write tools.** Only refund
+sits on a Razorpay endpoint that natively supports an idempotency key —
+payouts and transfers are the other two, and the MCP server doesn't expose a
+create tool for either. `capture_payment` has no key available, but a second
+capture is blocked by Razorpay's own status machine: Sonnet retried it in
+8/8 runs — the same habit that duplicated refunds — and caused zero harm,
+because the endpoint, not the model, stopped it. Haiku's one miss was a
+different bug: it reported a successfully captured payment as failed after a
+single dropped response, no retry, no re-read.
+
 - [Write-up](ledger-truth/docs/writeup.md) — the full story
-- [Findings](ledger-truth/docs/findings.md) — FIND-1 through FIND-5
+- [Findings](ledger-truth/docs/findings.md) — FIND-1 through FIND-8
 - [README](ledger-truth/) — design decisions, methodology, limits
 
 ```bash

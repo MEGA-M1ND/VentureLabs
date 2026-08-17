@@ -12,6 +12,7 @@ from ledgertruth import (
     Outcome,
     PaymentStatus,
     RefundStatus,
+    capture_payment,
     full_refund,
     inr,
     no_refund_occurred,
@@ -161,6 +162,23 @@ class TestPartialRefund:
         verdict = partial_refund("pay_TEST1", inr(250)).verify(snap)
         assert verdict.outcome is Outcome.FAILED
         assert verdict.recommended_action is Action.ESCALATE
+
+
+class TestCapturePayment:
+    def test_captured_verifies(self):
+        snap = snapshot(payments=[make_payment(status=PaymentStatus.CAPTURED)])
+        verdict = capture_payment("pay_TEST1").verify(snap)
+        assert verdict.outcome is Outcome.VERIFIED
+        assert verdict.recommended_action is Action.NONE
+
+    def test_still_authorized_fails_and_recommends_reread(self):
+        """Not the money-duplication shape -- capture is state-gated, so the
+        interesting failure is a still-open capture, and the right move is to
+        look again rather than escalate to a human."""
+        snap = snapshot(payments=[make_payment(status=PaymentStatus.AUTHORIZED)])
+        verdict = capture_payment("pay_TEST1").verify(snap)
+        assert verdict.outcome is Outcome.FAILED
+        assert verdict.recommended_action is Action.REREAD
 
 
 class TestNegativeContract:
