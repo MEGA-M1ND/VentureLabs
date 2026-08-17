@@ -15,6 +15,25 @@ server cannot leak across the comparison.
 Note the distinction the analysis has to preserve: a weaker model may fail the
 mission outright (never refunds at all), which is a *different* outcome from
 refunding twice. Only the second falsifies FIND-4. Both are reported.
+
+**Mission sizing is load-bearing.** Under the default `full_refund` mission a
+model that retries after the dropped response is rescued by Razorpay's own
+amount ceiling -- the retry is rejected with "the payment has been fully refunded
+already" and the ledger stays correct. That makes the duplicate column read zero
+even for a model that plainly retried, which is a false negative in the
+dangerous direction.
+
+So two signals are tracked, and the second is the honest one:
+
+  multi_create_calls  did the model issue a second create_refund at all?
+                      Visible under any mission. This is the behaviour.
+  duplicates          did money actually move twice? Only meaningful when the
+                      refund is a fraction of the payment, so a retry is
+                      arithmetically able to land.
+
+Run the ladder with `--mission partial_refund_249_50` for the duplicate rate.
+The same confound invalidated the first version of the race experiment; see
+FIND-6's method note.
 """
 
 from __future__ import annotations
@@ -42,8 +61,6 @@ from ledgertruth.runner import score, write_record  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT.parent / ".tools"
-RECORDS = ROOT / "runs" / "sweep.jsonl"
-SUMMARY = ROOT / "runs" / "sweep_summary.json"
 
 
 @dataclass(frozen=True)
@@ -75,6 +92,7 @@ def main() -> int:
     parser.add_argument("--mission", default="full_refund")
     parser.add_argument("--chaos", default="drop_refund_response", choices=sorted(PROFILES))
     parser.add_argument("--model", action="append", help="restrict to these models")
+    parser.add_argument("--out", default="runs/sweep.jsonl", help="records path")
     args = parser.parse_args()
 
     env = load_env(ROOT / ".env")
@@ -89,6 +107,8 @@ def main() -> int:
         print(f"FAIL: chaos-capable MCP binary not found at {binary}")
         return 1
 
+    records_path = ROOT / args.out
+    summary_path = records_path.with_name(records_path.stem + "_summary.json")
     cells = [c for c in LADDER if not args.model or c.model in args.model]
     mission = BY_ID[args.mission]
     client = anthropic.Anthropic(api_key=anthropic_key)
@@ -136,7 +156,7 @@ def main() -> int:
                             run = agent.run(mission.id, mission.prompt(seeded.payment_id))
                             snap = reader.snapshot_for_payment(seeded.payment_id)
                             record = score(mission, seeded.payment_id, run, snap, chaos=args.chaos)
-                            write_record(record, RECORDS)
+                            write_record(record, records_path)
                         except Exception as exc:
                             # One bad run must not abort a multi-hour sweep.
                             counts["errors"] += 1
@@ -170,8 +190,8 @@ def main() -> int:
 
             tally[cell.label] = counts
             print(f"  -> {counts}\n")
-            SUMMARY.parent.mkdir(parents=True, exist_ok=True)
-            SUMMARY.write_text(
+            summary_path.parent.mkdir(parents=True, exist_ok=True)
+            summary_path.write_text(
                 json.dumps(
                     {
                         "started_at": started.isoformat(),
@@ -196,7 +216,7 @@ def main() -> int:
             f"{label:<34}{c['runs']:>4}{c['verified']:>10}{c['failed']:>8}"
             f"{c['duplicates']:>7}{c['multi_create_calls']:>11}"
         )
-    print(f"\nrecords: {RECORDS}\nsummary: {SUMMARY}")
+    print(f"\nrecords: {records_path}\nsummary: {summary_path}")
     return 0
 
 
